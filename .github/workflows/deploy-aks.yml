@@ -1,86 +1,258 @@
+
 name: Test build and deploy to AKS
+
 on:
   pull_request:
     branches: [main]
+
   push:
     branches: [main]
+
   workflow_dispatch:
+
 permissions:
   contents: read
+
 concurrency:
   group: aks-${{ github.ref }}
   cancel-in-progress: false
+
 jobs:
+  # --------------------------------------------------
+  # JOB 1: Test and validate the application
+  # --------------------------------------------------
   test:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
-      - run: npm ci
-      - run: npm run check && npm test
-      - name: Validate manifest inputs
-        run: python3 scripts/render.py --registry example.azurecr.io --tag test --client-cidr 192.0.2.1/32
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks and tests
+        run: npm run check && npm test
+
+      - name: Validate Kubernetes manifest inputs
+        run: |
+          python3 scripts/render.py \
+            --registry example.azurecr.io \
+            --tag test \
+            --client-cidr 192.0.2.1/32
+
       - name: Build and check Apache configuration
         run: |
-          docker build -f Dockerfile.httpd -t boxoffice-apache:test .
+          docker build \
+            -f Dockerfile.httpd \
+            -t boxoffice-apache:test .
+
           docker run --rm boxoffice-apache:test httpd -t
+
       - name: Build application image
         run: docker build -t boxoffice-app:test .
+
+  # --------------------------------------------------
+  # JOB 2: Authenticate to Azure and deploy to AKS
+  # --------------------------------------------------
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+
     needs: test
     runs-on: ubuntu-latest
-    environment: aks-lab
+
+    # Must match the GitHub OIDC federated credential.
+    environment: terraform-lab
+
     permissions:
       contents: read
       id-token: write
+
     env:
-      ACR_NAME: ${{ vars.ACR_NAME }}
-      AKS_NAME: ${{ vars.AKS_NAME }}
-      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      ACR_NAME: ${{ vars.TF_ACR_NAME }}
+      AKS_NAME: ${{ vars.TF_AKS_NAME }}
+      AZURE_RESOURCE_GROUP: ${{ vars.TF_RESOURCE_GROUP }}
       CLIENT_CIDR: ${{ vars.CLIENT_CIDR }}
       IMAGE_TAG: ${{ github.sha }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------
+      # Validate GitHub variables before Azure Login
+      # ----------------------------------------------
+      - name: Validate required variables
+        shell: bash
+
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+        run: |
+          set -euo pipefail
+
+          for name in \
+            AZURE_CLIENT_ID \
+            AZURE_TENANT_ID \
+            AZURE_SUBSCRIPTION_ID \
+            ACR_NAME \
+            AKS_NAME \
+            AZURE_RESOURCE_GROUP \
+            CLIENT_CIDR
+          do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing GitHub variable: $name"
+              exit 1
+            fi
+          done
+
+          echo "All required GitHub variables are available."
+
+      # ----------------------------------------------
+      # Authenticate using the new Azure service
+      # principal and GitHub OIDC
+      # ----------------------------------------------
+      - name: Azure login via GitHub OIDC
+        uses: azure/login@v2
+
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Build and push both images
+
+      # ----------------------------------------------
+      # Confirm ACR and AKS exist
+      # ----------------------------------------------
+      - name: Verify target infrastructure
         shell: bash
+
         run: |
           set -euo pipefail
-          registry=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+
+          echo "Checking Azure Container Registry..."
+
+          az acr show \
+            --name "$ACR_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "{Name:name,LoginServer:loginServer}" \
+            -o table
+
+          echo "Checking AKS cluster..."
+
+          az aks show \
+            --name "$AKS_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "{Name:name,ProvisioningState:provisioningState}" \
+            -o table
+
+      # ----------------------------------------------
+      # Build Docker images and push them to ACR
+      # ----------------------------------------------
+      - name: Build and push both images
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+          registry=$(az acr show \
+            --name "$ACR_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query loginServer \
+            -o tsv)
+
           echo "ACR_LOGIN_SERVER=$registry" >> "$GITHUB_ENV"
+
+          echo "Logging in to Azure Container Registry..."
+
           az acr login --name "$ACR_NAME"
-          docker build -t "$registry/boxoffice-app:$IMAGE_TAG" .
-          docker build -f Dockerfile.httpd -t "$registry/boxoffice-apache:$IMAGE_TAG" .
+
+          echo "Building application image..."
+
+          docker build \
+            -t "$registry/boxoffice-app:$IMAGE_TAG" .
+
+          echo "Building Apache image..."
+
+          docker build \
+            -f Dockerfile.httpd \
+            -t "$registry/boxoffice-apache:$IMAGE_TAG" .
+
+          echo "Pushing application image..."
+
           docker push "$registry/boxoffice-app:$IMAGE_TAG"
+
+          echo "Pushing Apache image..."
+
           docker push "$registry/boxoffice-apache:$IMAGE_TAG"
-      - uses: azure/use-kubelogin@v1
+
+      # ----------------------------------------------
+      # Configure kubelogin and AKS access
+      # ----------------------------------------------
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1
+
         with:
           kubelogin-version: 'v0.2.20'
-      - uses: azure/aks-set-context@v4
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+
         with:
-          resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
-          cluster-name: ${{ vars.AKS_NAME }}
+          resource-group: ${{ vars.TF_RESOURCE_GROUP }}
+          cluster-name: ${{ vars.TF_AKS_NAME }}
           admin: 'false'
           use-kubelogin: 'true'
+
+      # ----------------------------------------------
+      # Install matching kubectl version
+      # ----------------------------------------------
       - name: Align kubectl with cluster version
         shell: bash
+
         run: |
-          version=$(az aks show -g "$AZURE_RESOURCE_GROUP" -n "$AKS_NAME" --query currentKubernetesVersion -o tsv)
+          set -euo pipefail
+
+          version=$(az aks show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AKS_NAME" \
+            --query currentKubernetesVersion \
+            -o tsv)
+
           mkdir -p "$HOME/.local/bin"
-          az aks install-cli --client-version "$version" --install-location "$HOME/.local/bin/kubectl" --kubelogin-install-location "$HOME/.local/bin/kubelogin"
+
+          az aks install-cli \
+            --client-version "$version" \
+            --install-location "$HOME/.local/bin/kubectl" \
+            --kubelogin-install-location "$HOME/.local/bin/kubelogin"
+
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # ----------------------------------------------
+      # Deploy the application
+      # ----------------------------------------------
       - name: Deploy and wait for readiness
+        shell: bash
+
         run: bash scripts/deploy.sh
+
+      # ----------------------------------------------
+      # Diagnostics if deployment fails
+      # ----------------------------------------------
       - name: Deployment diagnostics
         if: failure()
+
+        shell: bash
+
         run: |
           kubectl -n boxoffice get pods,svc,pvc || true
-          kubectl -n boxoffice get events --sort-by=.lastTimestamp || true
+
+          kubectl -n boxoffice get events \
+            --sort-by=.lastTimestamp || true

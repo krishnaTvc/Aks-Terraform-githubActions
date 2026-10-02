@@ -19,7 +19,7 @@ concurrency:
 jobs:
   terraform:
     runs-on: ubuntu-latest
-    environment: aks-lab
+    environment: terraform-lab
     env:
       ARM_USE_OIDC: 'true'
       ARM_USE_AZUREAD: 'true'

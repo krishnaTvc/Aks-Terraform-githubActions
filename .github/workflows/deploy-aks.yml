@@ -25,15 +25,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+<<<<<<< Updated upstream
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
+=======
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+>>>>>>> Stashed changes
         with:
           node-version: '24'
           cache: npm
 
+<<<<<<< Updated upstream
       - name: Install dependencies
         run: npm ci
 
@@ -41,6 +48,13 @@ jobs:
         run: npm run check && npm test
 
       - name: Validate Kubernetes manifest inputs
+=======
+      - run: npm ci
+
+      - run: npm run check && npm test
+
+      - name: Validate manifest inputs
+>>>>>>> Stashed changes
         run: |
           python3 scripts/render.py \
             --registry example.azurecr.io \
@@ -58,16 +72,23 @@ jobs:
       - name: Build application image
         run: docker build -t boxoffice-app:test .
 
+<<<<<<< Updated upstream
   # --------------------------------------------------
   # JOB 2: Authenticate to Azure and deploy to AKS
   # --------------------------------------------------
+=======
+>>>>>>> Stashed changes
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
     needs: test
     runs-on: ubuntu-latest
 
+<<<<<<< Updated upstream
     # Must match the GitHub OIDC federated credential.
+=======
+    # Must match the new GitHub OIDC federated credential
+>>>>>>> Stashed changes
     environment: terraform-lab
 
     permissions:
@@ -75,6 +96,10 @@ jobs:
       id-token: write
 
     env:
+<<<<<<< Updated upstream
+=======
+      # Use the same infrastructure variables as terraform.yml
+>>>>>>> Stashed changes
       ACR_NAME: ${{ vars.TF_ACR_NAME }}
       AKS_NAME: ${{ vars.TF_AKS_NAME }}
       AZURE_RESOURCE_GROUP: ${{ vars.TF_RESOURCE_GROUP }}
@@ -82,6 +107,7 @@ jobs:
       IMAGE_TAG: ${{ github.sha }}
 
     steps:
+<<<<<<< Updated upstream
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -91,11 +117,20 @@ jobs:
       - name: Validate required variables
         shell: bash
 
+=======
+      - uses: actions/checkout@v4
+
+      - name: Validate required variables
+        shell: bash
+>>>>>>> Stashed changes
         env:
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+<<<<<<< Updated upstream
 
+=======
+>>>>>>> Stashed changes
         run: |
           set -euo pipefail
 
@@ -109,11 +144,16 @@ jobs:
             CLIENT_CIDR
           do
             if [ -z "${!name:-}" ]; then
+<<<<<<< Updated upstream
               echo "::error::Missing GitHub variable: $name"
+=======
+              echo "::error::Missing variable: $name"
+>>>>>>> Stashed changes
               exit 1
             fi
           done
 
+<<<<<<< Updated upstream
           echo "All required GitHub variables are available."
 
       # ----------------------------------------------
@@ -123,20 +163,48 @@ jobs:
       - name: Azure login via GitHub OIDC
         uses: azure/login@v2
 
+=======
+          echo "All required variables are configured."
+
+      - name: Azure login via new GitHub OIDC
+        uses: azure/login@v2
+>>>>>>> Stashed changes
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+<<<<<<< Updated upstream
       # ----------------------------------------------
       # Confirm ACR and AKS exist
       # ----------------------------------------------
       - name: Verify target infrastructure
+=======
+      - name: Verify target infrastructure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          az acr show \
+            --name "$ACR_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "{Name:name,LoginServer:loginServer}" \
+            -o table
+
+          az aks show \
+            --name "$AKS_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "{Name:name,ProvisioningState:provisioningState}" \
+            -o table
+
+      - name: Build and push both images
+>>>>>>> Stashed changes
         shell: bash
 
         run: |
           set -euo pipefail
 
+<<<<<<< Updated upstream
           echo "Checking Azure Container Registry..."
 
           az acr show \
@@ -181,18 +249,36 @@ jobs:
 
           echo "Building Apache image..."
 
+=======
+          registry=$(az acr show \
+            --name "$ACR_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query loginServer -o tsv)
+
+          echo "ACR_LOGIN_SERVER=$registry" >> "$GITHUB_ENV"
+
+          az acr login --name "$ACR_NAME"
+
+          docker build \
+            -t "$registry/boxoffice-app:$IMAGE_TAG" .
+
+>>>>>>> Stashed changes
           docker build \
             -f Dockerfile.httpd \
             -t "$registry/boxoffice-apache:$IMAGE_TAG" .
 
+<<<<<<< Updated upstream
           echo "Pushing application image..."
 
+=======
+>>>>>>> Stashed changes
           docker push "$registry/boxoffice-app:$IMAGE_TAG"
 
           echo "Pushing Apache image..."
 
           docker push "$registry/boxoffice-apache:$IMAGE_TAG"
 
+<<<<<<< Updated upstream
       # ----------------------------------------------
       # Configure kubelogin and AKS access
       # ----------------------------------------------
@@ -205,15 +291,25 @@ jobs:
       - name: Set AKS context
         uses: azure/aks-set-context@v4
 
+=======
+      - uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: 'v0.2.20'
+
+      - uses: azure/aks-set-context@v4
+>>>>>>> Stashed changes
         with:
           resource-group: ${{ vars.TF_RESOURCE_GROUP }}
           cluster-name: ${{ vars.TF_AKS_NAME }}
           admin: 'false'
           use-kubelogin: 'true'
 
+<<<<<<< Updated upstream
       # ----------------------------------------------
       # Install matching kubectl version
       # ----------------------------------------------
+=======
+>>>>>>> Stashed changes
       - name: Align kubectl with cluster version
         shell: bash
 
@@ -221,10 +317,16 @@ jobs:
           set -euo pipefail
 
           version=$(az aks show \
+<<<<<<< Updated upstream
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AKS_NAME" \
             --query currentKubernetesVersion \
             -o tsv)
+=======
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AKS_NAME" \
+            --query currentKubernetesVersion -o tsv)
+>>>>>>> Stashed changes
 
           mkdir -p "$HOME/.local/bin"
 
@@ -235,6 +337,7 @@ jobs:
 
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+<<<<<<< Updated upstream
       # ----------------------------------------------
       # Deploy the application
       # ----------------------------------------------
@@ -251,6 +354,15 @@ jobs:
 
         shell: bash
 
+=======
+      - name: Deploy and wait for readiness
+        shell: bash
+        run: bash scripts/deploy.sh
+
+      - name: Deployment diagnostics
+        if: failure()
+        shell: bash
+>>>>>>> Stashed changes
         run: |
           kubectl -n boxoffice get pods,svc,pvc || true
 

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Demo-Boxoffice</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #1f2430;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --border: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #eef2ff 0%, #f6f7fb 60%);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 40px auto;
+      padding: 0 16px;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 28px;
+      letter-spacing: 0.5px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 10px 25px rgba(31, 36, 48, 0.08);
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      color: var(--muted);
+      margin: 12px 0 6px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    .search-row input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    .radio-group {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+      font-size: 14px;
+      color: var(--text);
+    }
+
+    .btn {
+      margin-top: 16px;
+      padding: 10px 14px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn.secondary {
+      background: #0f172a;
+    }
+
+    .message {
+      margin-top: 10px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px 6px;
+      text-align: left;
+    }
+
+    th {
+      background: #f8fafc;
+      font-weight: 600;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 600px) {
+      .search-row { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Demo-Boxoffice</h1>
+    <div class="grid">
+      <div class="card">
+        <h2>Add Movie</h2>
+        <form id="movieForm">
+          <label for="movieName">MovieName</label>
+          <input id="movieName" name="movieName" type="text" required />
+
+          <label for="hero">Hero</label>
+          <input id="hero" name="hero" type="text" required />
+
+          <label for="collection">Collection</label>
+          <input id="collection" name="collection" type="number" step="0.01" min="0" required />
+
+          <label>Status</label>
+          <div class="radio-group">
+            <label><input type="radio" name="status" value="running" required /> Running</label>
+            <label><input type="radio" name="status" value="left" required /> Left</label>
+          </div>
+
+          <button class="btn" type="submit">Submit</button>
+          <div id="formMessage" class="message"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Search Movies</h2>
+        <div class="search-row">
+          <input id="searchInput" type="text" placeholder="Search by movie name or hero..." />
+          <button id="searchBtn" class="btn secondary" type="button">Search</button>
+          <button id="listAllBtn" class="btn" type="button">List All</button>
+        </div>
+        <div id="searchMessage" class="message"></div>
+        <div style="overflow-x: auto;">
+          <table id="resultsTable">
+            <thead>
+              <tr>
+                <th>MovieName</th>
+                <th>Hero</th>
+                <th>Collection</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('movieForm');
+    const formMessage = document.getElementById('formMessage');
+    const searchBtn = document.getElementById('searchBtn');
+    const listAllBtn = document.getElementById('listAllBtn');
+    const searchInput = document.getElementById('searchInput');
+    const searchMessage = document.getElementById('searchMessage');
+    const resultsBody = document.querySelector('#resultsTable tbody');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      formMessage.textContent = 'Saving...';
+
+      const payload = {
+        movieName: form.movieName.value.trim(),
+        hero: form.hero.value.trim(),
+        collection: parseFloat(form.collection.value),
+        status: form.status.value
+      };
+
+      try {
+        const res = await fetch('/api/movies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+        if (!res.ok) throw new Error(data.message || 'Failed to save');
+
+        formMessage.textContent = 'Saved successfully.';
+        form.reset();
+      } catch (err) {
+        formMessage.textContent = err.message;
+      }
+    });
+
+    const runSearch = async (query) => {
+      searchMessage.textContent = 'Searching...';
+      resultsBody.innerHTML = '';
+
+      try {
+        const res = await fetch(`/api/movies?query=${encodeURIComponent(query)}`);
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : [];
+        if (!res.ok) throw new Error(data.message || 'Search failed');
+
+        if (data.length === 0) {
+          searchMessage.textContent = 'No results found.';
+          return;
+        }
+
+        searchMessage.textContent = `Found ${data.length} result(s).`;
+        data.forEach((row) => {
+          const tr = document.createElement('tr');
+          [row.movie_name, row.hero, row.collection, row.status].forEach(value => {
+            const td = document.createElement('td');
+            td.textContent = String(value ?? '');
+            tr.appendChild(td);
+          });
+          resultsBody.appendChild(tr);
+        });
+      } catch (err) {
+        searchMessage.textContent = err.message;
+      }
+    };
+
+    searchBtn.addEventListener('click', async () => {
+      const query = searchInput.value.trim();
+      await runSearch(query);
+    });
+
+    listAllBtn.addEventListener('click', async () => {
+      searchInput.value = '';
+      await runSearch('');
+    });
+
+    window.addEventListener('load', async () => {
+      await runSearch('');
+    });
+  </script>
+</body>
+</html>

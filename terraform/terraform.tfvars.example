@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (ignored by Git), or supply TF_VAR_* environment variables.
+subscription_id = "a9624b2e-d87a-4cf5-b377-042f02856a65"
+acr_name = "acrboxoffice2026"
+resource_group_name = "rg-boxoffice-terraform-lab"
+aks_name = "aks-boxoffice-tf"
+location = "eastus"

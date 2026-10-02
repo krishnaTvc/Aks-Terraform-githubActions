@@ -1,0 +1,81 @@
+name: Terraform AKS infrastructure (separate lab)
+on:
+  pull_request:
+    paths: ['terraform/**', '.github/workflows/terraform.yml']
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'plan or apply (apply requires environment approval if configured)'
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: terraform-boxoffice-lab
+  cancel-in-progress: false
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: aks-lab
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_acr_name: ${{ vars.TF_ACR_NAME }}
+      TF_VAR_resource_group_name: ${{ vars.TF_RESOURCE_GROUP }}
+      TF_VAR_aks_name: ${{ vars.TF_AKS_NAME }}
+      TF_VAR_location: ${{ vars.TF_LOCATION }}
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.13.5'
+      - name: Azure login via existing GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Ensure required variables exist
+        run: |
+          set -euo pipefail
+          for n in ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID TF_VAR_acr_name TF_VAR_resource_group_name TF_VAR_aks_name TF_VAR_location; do
+            if [ -z "${!n:-}" ]; then echo "Missing variable: $n"; exit 1; fi
+          done
+          for n in TF_BACKEND_RG TF_BACKEND_STORAGE TF_BACKEND_CONTAINER; do
+            if [ -z "${!n:-}" ]; then echo "Missing GitHub variable: $n"; exit 1; fi
+          done
+        env:
+          TF_BACKEND_RG: ${{ vars.TF_BACKEND_RG }}
+          TF_BACKEND_STORAGE: ${{ vars.TF_BACKEND_STORAGE }}
+          TF_BACKEND_CONTAINER: ${{ vars.TF_BACKEND_CONTAINER }}
+      - name: Terraform init (pre-created Azure Blob backend)
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TF_BACKEND_STORAGE }}" \
+            -backend-config="container_name=${{ vars.TF_BACKEND_CONTAINER }}" \
+            -backend-config="key=boxoffice-lab.tfstate" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="use_oidc=true"
+      - name: Terraform format
+        run: terraform fmt -check -recursive
+      - name: Terraform validate
+        run: terraform validate -no-color
+      - name: Terraform plan
+        run: terraform plan -input=false -lock-timeout=5m -out=boxoffice.tfplan
+      - name: Terraform apply (explicit manual selection only)
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply' && github.ref == 'refs/heads/main'
+        run: terraform apply -input=false -lock-timeout=5m boxoffice.tfplan
+      - name: Infrastructure outputs
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply' && github.ref == 'refs/heads/main'
+        run: terraform output

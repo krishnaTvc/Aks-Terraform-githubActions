@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.rendered/
+*.zip
+*.log
+*.kubeconfig
+secrets*.yaml
+
+# Terraform local state and credentials
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/terraform.tfvars
+**/*.auto.tfvars

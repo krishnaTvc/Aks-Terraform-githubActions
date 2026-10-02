@@ -1,0 +1,86 @@
+name: Test build and deploy to AKS
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aks-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check && npm test
+      - name: Validate manifest inputs
+        run: python3 scripts/render.py --registry example.azurecr.io --tag test --client-cidr 192.0.2.1/32
+      - name: Build and check Apache configuration
+        run: |
+          docker build -f Dockerfile.httpd -t boxoffice-apache:test .
+          docker run --rm boxoffice-apache:test httpd -t
+      - name: Build application image
+        run: docker build -t boxoffice-app:test .
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    environment: aks-lab
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ACR_NAME: ${{ vars.ACR_NAME }}
+      AKS_NAME: ${{ vars.AKS_NAME }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CLIENT_CIDR: ${{ vars.CLIENT_CIDR }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build and push both images
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+          echo "ACR_LOGIN_SERVER=$registry" >> "$GITHUB_ENV"
+          az acr login --name "$ACR_NAME"
+          docker build -t "$registry/boxoffice-app:$IMAGE_TAG" .
+          docker build -f Dockerfile.httpd -t "$registry/boxoffice-apache:$IMAGE_TAG" .
+          docker push "$registry/boxoffice-app:$IMAGE_TAG"
+          docker push "$registry/boxoffice-apache:$IMAGE_TAG"
+      - uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: 'v0.2.20'
+      - uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+          cluster-name: ${{ vars.AKS_NAME }}
+          admin: 'false'
+          use-kubelogin: 'true'
+      - name: Align kubectl with cluster version
+        shell: bash
+        run: |
+          version=$(az aks show -g "$AZURE_RESOURCE_GROUP" -n "$AKS_NAME" --query currentKubernetesVersion -o tsv)
+          mkdir -p "$HOME/.local/bin"
+          az aks install-cli --client-version "$version" --install-location "$HOME/.local/bin/kubectl" --kubelogin-install-location "$HOME/.local/bin/kubelogin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Deploy and wait for readiness
+        run: bash scripts/deploy.sh
+      - name: Deployment diagnostics
+        if: failure()
+        run: |
+          kubectl -n boxoffice get pods,svc,pvc || true
+          kubectl -n boxoffice get events --sort-by=.lastTimestamp || true

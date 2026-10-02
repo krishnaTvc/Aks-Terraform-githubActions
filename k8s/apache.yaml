@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: boxoffice-web
+  namespace: boxoffice
+spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+    - __CLIENT_CIDR__
+  selector:
+    app: boxoffice-apache
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boxoffice-apache
+  namespace: boxoffice
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: boxoffice-apache
+  template:
+    metadata:
+      labels:
+        app: boxoffice-apache
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/os: linux
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2
+        runAsGroup: 2
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apache
+          image: __REGISTRY__/boxoffice-apache:__TAG__
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 12

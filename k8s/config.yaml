@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: boxoffice-config
+  namespace: boxoffice
+data:
+  PORT: "3000"
+  DB_NAME: demo_boxoffice
+  MONGO_URL: mongodb://mongo:27017/demo_boxoffice?authSource=demo_boxoffice
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-init
+  namespace: boxoffice
+data:
+  01-create-app-user.js: |
+    const appDb = db.getSiblingDB('demo_boxoffice');
+    appDb.createUser({
+      user: process.env.MONGO_USERNAME,
+      pwd: process.env.MONGO_PASSWORD,
+      roles: [{ role: 'readWrite', db: 'demo_boxoffice' }]
+    });
